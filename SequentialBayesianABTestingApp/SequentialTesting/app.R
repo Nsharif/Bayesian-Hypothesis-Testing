@@ -1,27 +1,28 @@
-# load the necessary libraries
+# Load libraries required for the Shiny app, Bayesian analysis, and plotting
 library(bayesAB)
 library(shiny)
 library(ggplot2)
 
-# create a custom function that takes a prior distribution and observed data, 
-# and it returns an updated posterior distribution. 
+# Custom function: Updates the posterior distribution using the prior distribution and observed data
 update_normal <- function(prior, data) {
+  # Calculate new mean and variance for the updated posterior distribution
   new_mean <- (prior$mean / prior$var + sum(data) / (length(data) * prior$var)) / (1 / prior$var + length(data) / (length(data) * prior$var))
   new_var <- 1 / (1 / prior$var + length(data) / (length(data) * prior$var))
   
+  # Compute the likelihood values for each data point
   likelihood <- dnorm(data, mean = mean(data), sd = sqrt(prior$var))
   print(paste("Likelihood values:", paste(likelihood, collapse = ", ")))
   
+  # Return the updated posterior distribution as a list
   return(list(mean = new_mean, var = new_var))
 }
 
-# create a custom function that takes two posterior distributions and returns the 
-# probability that the mean of version A is greater than the mean of version B.
+# Custom function: Calculates the probability that the mean of version A is greater than the mean of version B
 prob_superiority <- function(posterior_A, posterior_B) {
   return(pnorm((posterior_A$mean - posterior_B$mean) / sqrt(posterior_A$var + posterior_B$var)))
 }
 
-# create the UI
+# Create the Shiny app user interface layout with inputs and outputs
 ui <- fluidPage(
   titlePanel("Bayesian AB Testing with Sequential Testing"),
   sidebarLayout(
@@ -48,34 +49,35 @@ ui <- fluidPage(
   )
 )
 
-# define the server function
+# Define the Shiny app server function, which runs the Bayesian AB testing and generates the output plots and summaries
 server <- function(input, output) {
   observeEvent(input$goButton, {
-    # Set the seed for reproducibility
+    
+    # Set the random seed for reproducibility of the results
     set.seed(123)
     
-    # Initialize the prior distribution
+    # Initialize the prior distribution using the user inputs for mean and variance
     prior <- list(mean = input$prior_mean, var = input$prior_sd^2)
     
-    # Initialize the posterior distribution for A and B
+    # Initialize the posterior distribution for versions A and B using the prior distribution
     posterior_A <- prior
     posterior_B <- prior
     
-    # Initialize the sample sizes
+    # Initialize the sample sizes for versions A and B
     n_A <- 0
     n_B <- 0
     
-    # Initialize the data
+    # Initialize the observed data for versions A and B
     data_A <- numeric()
     data_B <- numeric()
     
-    # Initialize the stopping threshold values variable
+    # Initialize a data frame to store the stopping threshold values at each step
     threshold_values <- data.frame(step = integer(), value = numeric())
     
-    # Collect data until the stopping rule is met
+    # Perform Bayesian sequential testing by collecting data until the stopping rule is met
     while (TRUE) {
       
-      # Choose which version to sample from
+      # Choose which version (A or B) to sample from based on the current step
       if ((n_A + n_B) %% 2 == 0) {
         n_A <- n_A + 1
         data_A[n_A] <- rnorm(1, mean = input$mean_A, sd = input$sd_A)
@@ -86,16 +88,16 @@ server <- function(input, output) {
         posterior_B <- update_normal(posterior_B, data_B)
       }
       
-      # Calculate the probability that version A is better than version B
+      # Calculate the probability that version A is better than version B using the prob_superiority custom function
       prob_A_better <- prob_superiority(posterior_A, posterior_B)
       
-      # Calculate the difference in means between the two treatments
+      # Calculate the difference in means between the two treatments based on their posterior distributions
       mean_diff <- posterior_A$mean - posterior_B$mean
       
-      # Add the current probability value to the threshold_values data frame
+      # Add the current probability value to the threshold_values data frame for plotting
       threshold_values <- rbind(threshold_values, data.frame(step = n_A + n_B, value = prob_A_better))
       
-      # Check if the stopping rule is met
+      # Check if the stopping rule is met based on the probability of superiority and the user-defined minimum acceptable effect size
       if (mean_diff >= input$min_effect_size) {
         if (prob_A_better > input$stop_rule | prob_A_better < 1 - input$stop_rule) {
           break
@@ -107,20 +109,20 @@ server <- function(input, output) {
         }
       }
       
-      # Print statements
+      # Print statements for debugging purposes, displaying the current state of the analysis
       print(paste0("n_A = ", n_A))
       print(paste0("data_A = ", data_A))
       print(paste0("posterior_A = ", posterior_A))
       
     }
     
-    # Display stopping step and threshold (new addition)
+    # Display stopping step and threshold in the Shiny app output
     output$stoppingStepInfo <- renderText({
       paste0("Stopping Step: ", n_A + n_B, "\n",
              "Threshold: ", input$stop_rule)
     })
     
-    # Display sample sizes, posterior means and variances, and probability of superiority (suggestion 2)
+    # Display sample sizes, posterior means and variances, and probability of superiority in the Shiny app output
     output$summaryInfo <- renderText({
       paste0("Sample sizes:\n",
              "Version A: ", n_A, "\n",
@@ -133,18 +135,18 @@ server <- function(input, output) {
              "Version B: ", round(posterior_B$var, 4))
     })
     
-    # Display probability of superiority (suggestion 2)
+    # Display probability of superiority in the Shiny app output
     output$probSuperiorityInfo <- renderText({
       paste0("Probability of Superiority:\n",
              "P(A > B) = ", round(prob_A_better, 4))
     })
     
-    # Display minimum acceptable effect size
+    # Display minimum acceptable effect size in the Shiny app output
     output$minEffectSizeInfo <- renderText({
       paste0("Minimum acceptable effect size: ", input$min_effect_size)
     })
     
-    # Generate the plot
+    # Generate the posterior distribution plot comparing versions A and B
     output$plot <- renderPlot({
       data_frame <- data.frame(version = c(rep("A", length(data_A)), rep("B", length(data_B))),
                                value = c(data_A, data_B))
@@ -157,20 +159,26 @@ server <- function(input, output) {
         scale_y_continuous(limits = c(0, max(density(c(data_A, data_B))$y, na.rm = TRUE, finite = TRUE) * 1.5)) +
         theme_minimal()
       
-      # Add label for the probability of superiority (suggestion 1)
+      # Add label for the probability of superiority
       p <- p + annotate("text", x = max(data_frame$value), y = max(density(c(data_A, data_B))$y, na.rm = TRUE, finite = TRUE),
                         label = paste("P(A > B) =", round(prob_A_better, 4)),
                         hjust = 1, vjust = 1, size = 4)
       p
     })
     
-    # Generate the stopping threshold plot with the vertical line (updated)
+    # Generate the stopping threshold plot with the vertical line indicating
+    # when the stopping rule was met
     output$thresholdPlot <- renderPlot({
+      # Create a ggplot object to plot the threshold values over time
       ggplot(threshold_values, aes(x = step, y = value)) +
+        # Add a line plot of the threshold values
         geom_line() +
+        # Add red dashed lines for the stopping rule upper and lower thresholds
         geom_hline(yintercept = input$stop_rule, linetype = "dashed", color = "red") +
         geom_hline(yintercept = 1 - input$stop_rule, linetype = "dashed", color = "red") +
-        geom_vline(xintercept = n_A + n_B, linetype = "dashed", color = "blue") + # Add the vertical line
+        # Add a blue dashed vertical line at the step where the stopping rule was met
+        geom_vline(xintercept = n_A + n_B, linetype = "dashed", color = "blue") + 
+        # Add plot labels and use a minimal theme
         labs(title = "Stopping Threshold Over Time: Monitoring Decision Confidence",
              x = "Steps",
              y = "Probability of Superiority") +
@@ -179,6 +187,5 @@ server <- function(input, output) {
   })
 }
 
-# Run the app
+# Run the Shiny app with the defined user interface and server function
 shinyApp(ui = ui, server = server)
-

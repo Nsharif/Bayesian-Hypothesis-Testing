@@ -1,2 +1,2 @@
 # Bayesian-Hypothesis-Testing
-All thing Bayesian :)
+All things Bayesian :)
